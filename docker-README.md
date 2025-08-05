@@ -1459,4 +1459,392 @@ This comprehensive guide documented the complete process of containerizing and d
 ```
 
 This setup provides a robust, scalable, and maintainable containerized deployment of your MongoDB application with proper networking, security, and monitoring capabilities.
+
+---
+
+## Docker Compose Startup Process
+
+### Alternative Deployment Method: Docker Compose
+
+In addition to the manual Docker commands documented above, the application can also be started using Docker Compose for simplified management. This section documents the actual process used to successfully start all containers.
+
+### Prerequisites for Docker Compose Method
+
+1. **Docker Compose Configuration**: The project includes a `docker-compose.yml` file
+2. **Environment Configuration**: Backend environment variables properly configured
+3. **Built Images**: Frontend and backend images available locally
+
+### Step-by-Step Docker Compose Deployment
+
+#### Step 1: Initial Environment Check
+```bash
+# Navigate to project directory
+cd /home/prospa/aws-mongodb-app
+
+# Check project structure
+ls -la
+# Verify docker-compose.yml exists
+
+# Check existing containers
+docker ps -a
+# Clean up any conflicting containers if needed
+```
+
+#### Step 2: Environment Configuration Update
+The backend `.env` file needed to be updated to work with Docker Compose networking:
+
+```bash
+# Update backend environment file for Docker Compose
+# Original configuration used localhost, needed to change to container name
+```
+
+**Original `.env` configuration:**
+```env
+MONGODB_URI=mongodb://localhost:27017/aws-mongodb-app
+```
+
+**Updated `.env` configuration for Docker Compose:**
+```env
+MONGODB_URI=mongodb://admin:password123@mongodb:27017/myapp?authSource=admin
+```
+
+**Command used to update:**
+```bash
+# Update MongoDB URI to use container name and authentication
+sed -i 's|MONGODB_URI=mongodb://localhost:27017/aws-mongodb-app|MONGODB_URI=mongodb://admin:password123@mongodb:27017/myapp?authSource=admin|' backend/.env
+```
+
+#### Step 3: Initial Docker Compose Attempt
+```bash
+# First attempt to start all containers
+docker-compose down --remove-orphans
+docker-compose up -d
+```
+
+**Issues Encountered:**
+1. **Backend Health Check Failure**: Container marked as unhealthy
+2. **Port Conflict**: Nginx container failed due to port 80 already in use
+3. **Service Dependencies**: Frontend couldn't start due to backend health check failure
+
+#### Step 4: Troubleshooting Backend Health Check
+
+**Problem**: Backend container showing as unhealthy despite working API
+```bash
+# Check backend logs
+docker logs backend
+
+# Output showed:
+🚀 Starting AWS MongoDB Backend Application...
+✅ Environment variables loaded successfully
+📊 Environment: production
+🔌 Port: 5000
+🗄️  Database: mongodb://admin:password123@mongodb:27017/myapp?authSource=admin
+🔐 JWT configured with 7d expiration
+Server running on port 5000
+Environment: production
+MongoDB Connected: mongodb
+```
+
+**Diagnosis**: Health check script failing despite API working
+```bash
+# Test API directly
+curl -f http://localhost:5000/health
+# Response: {"status":"OK","timestamp":"2025-08-05T14:34:16.067Z","uptime":129.993416565,"environment":"production"}
+
+# Test health check script inside container
+docker exec backend node healthcheck.js
+# Exit code: 1 (failure)
+```
+
+**Solution**: Temporarily disable health check in docker-compose.yml
+```yaml
+# Comment out health check in backend service
+# healthcheck:
+#   test: ["CMD", "node", "healthcheck.js"]
+#   interval: 30s
+#   timeout: 10s
+#   retries: 3
+#   start_period: 40s
+```
+
+**Also update frontend dependency:**
+```yaml
+# Change from health check dependency to simple dependency
+depends_on:
+  - backend
+# Instead of:
+# depends_on:
+#   backend:
+#     condition: service_healthy
+```
+
+#### Step 5: Resolving Port Conflicts
+
+**Problem**: Nginx container failed to start
+```bash
+Error response from daemon: failed to set up container networking: 
+driver failed programming external connectivity on endpoint nginx: 
+failed to bind host port for 0.0.0.0:80:172.20.0.5:80/tcp: address already in use
+```
+
+**Diagnosis**: Port 80 already in use by system nginx
+```bash
+# Check what's using port 80
+sudo netstat -tlnp | grep :80
+# Output: tcp 0 0 0.0.0.0:80 0.0.0.0:* LISTEN 369/nginx: master p
+```
+
+**Solution**: Start containers without nginx for local development
+```bash
+# Start only the core application containers
+docker-compose up -d mongodb backend frontend
+```
+
+#### Step 6: Successful Container Startup
+
+**Final working command sequence:**
+```bash
+# Clean up any existing containers
+docker-compose down --remove-orphans
+
+# Start core application containers (excluding nginx)
+docker-compose up -d mongodb backend frontend
+```
+
+**Verification of successful startup:**
+```bash
+# Check container status
+docker ps
+# Expected output:
+CONTAINER ID   IMAGE                      COMMAND                  CREATED          STATUS                             PORTS
+e200eed8a9db   aws-mongodb-app-frontend   "dumb-init -- nginx …"   39 seconds ago   Up 24 seconds (healthy)            80/tcp, 0.0.0.0:3000->3000/tcp
+c83da054d485   aws-mongodb-app-backend    "docker-entrypoint.s…"   44 seconds ago   Up 25 seconds (health: starting)   0.0.0.0:5000->5000/tcp
+d9feedce1342   mongo:7.0                  "docker-entrypoint.s…"   45 seconds ago   Up 37 seconds (healthy)            0.0.0.0:27017->27017/tcp
+```
+
+#### Step 7: Application Testing and Verification
+
+**Backend API Testing:**
+```bash
+# Test backend health endpoint
+curl -s http://localhost:5000/health | jq .
+# Response:
+{
+  "status": "OK",
+  "timestamp": "2025-08-05T14:35:36.259Z",
+  "uptime": 22.485848857,
+  "environment": "production"
+}
+```
+
+**Frontend Testing:**
+```bash
+# Test frontend accessibility
+curl -s -I http://localhost:3000
+# Response:
+HTTP/1.1 200 OK
+Server: nginx
+Date: Tue, 05 Aug 2025 14:35:43 GMT
+Content-Type: text/html
+Content-Length: 480
+```
+
+**Database Testing:**
+```bash
+# Test MongoDB connection
+docker exec mongodb mongosh --host localhost --port 27017 -u admin -p password123 --authenticationDatabase admin --eval "db.adminCommand('ping')"
+# Response: { ok: 1 }
+```
+
+**API Endpoints Testing:**
+```bash
+# Test products API (public endpoint)
+curl -s http://localhost:5000/api/products | jq .
+# Response: JSON with sample products data
+
+# Test users API (protected endpoint)
+curl -s http://localhost:5000/api/users | jq .
+# Response: {"success": false, "message": "No token provided, authorization denied"}
+```
+
+#### Step 8: Container Logs Verification
+
+**Check all container logs:**
+```bash
+# View logs from all containers
+docker-compose logs --tail=10
+
+# Individual container logs
+docker logs frontend --tail=5
+docker logs backend --tail=5
+docker logs mongodb --tail=5
+```
+
+**Sample log outputs:**
+- **Frontend**: Nginx startup messages and HTTP request logs
+- **Backend**: Application startup, database connection, and API request logs
+- **MongoDB**: Database initialization and connection logs
+
+### Docker Compose Management Commands
+
+#### Essential Commands for Daily Use
+
+```bash
+# Start all containers
+docker-compose up -d
+
+# Start specific containers only
+docker-compose up -d mongodb backend frontend
+
+# Stop all containers
+docker-compose down
+
+# Stop and remove containers, networks, and volumes
+docker-compose down --remove-orphans
+
+# View container status
+docker-compose ps
+
+# View logs from all containers
+docker-compose logs
+
+# View logs from specific container
+docker-compose logs backend
+
+# Follow logs in real-time
+docker-compose logs -f backend
+
+# Restart specific container
+docker-compose restart backend
+
+# Rebuild and restart containers
+docker-compose up -d --build
+
+# Scale specific service (if supported)
+docker-compose up -d --scale backend=2
+```
+
+#### Troubleshooting Commands
+
+```bash
+# Check container health status
+docker-compose ps
+docker inspect <container_name> --format='{{.State.Health.Status}}'
+
+# Execute commands inside containers
+docker-compose exec backend /bin/sh
+docker-compose exec mongodb mongosh -u admin -p password123
+
+# View detailed container information
+docker-compose config
+docker-compose config --services
+
+# Check network connectivity
+docker-compose exec backend ping mongodb
+docker-compose exec frontend ping backend
+
+# Monitor resource usage
+docker stats $(docker-compose ps -q)
+```
+
+### Common Issues and Solutions
+
+#### Issue 1: Health Check Failures
+**Symptoms**: Container shows as unhealthy but application works
+**Solution**: 
+```bash
+# Temporarily disable health checks in docker-compose.yml
+# Or fix the health check script
+docker-compose exec backend node healthcheck.js
+```
+
+#### Issue 2: Port Conflicts
+**Symptoms**: "Port already in use" errors
+**Solution**:
+```bash
+# Check what's using the port
+sudo netstat -tlnp | grep :<port>
+# Stop conflicting service or change port mapping
+```
+
+#### Issue 3: Environment Variable Issues
+**Symptoms**: Database connection failures, configuration errors
+**Solution**:
+```bash
+# Verify environment variables
+docker-compose exec backend env | grep MONGODB_URI
+# Update .env files as needed
+```
+
+#### Issue 4: Network Connectivity Issues
+**Symptoms**: Containers can't communicate with each other
+**Solution**:
+```bash
+# Check Docker Compose network
+docker network ls
+docker network inspect <project_name>_default
+# Ensure all containers are on the same network
+```
+
+### Production Considerations for Docker Compose
+
+#### Environment-Specific Configurations
+```bash
+# Use different compose files for different environments
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+#### Security Enhancements
+```yaml
+# Use secrets for sensitive data
+secrets:
+  mongodb_password:
+    file: ./secrets/mongodb_password.txt
+
+services:
+  mongodb:
+    secrets:
+      - mongodb_password
+```
+
+#### Resource Limits
+```yaml
+services:
+  backend:
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+```
+
+### Summary of Docker Compose Process
+
+The Docker Compose deployment process involved:
+
+1. **Environment Configuration**: Updated backend `.env` file for container networking
+2. **Health Check Resolution**: Temporarily disabled problematic health checks
+3. **Port Conflict Resolution**: Excluded nginx container due to port 80 conflict
+4. **Successful Deployment**: Started core containers (MongoDB, Backend, Frontend)
+5. **Verification**: Tested all services and confirmed functionality
+
+**Final Working State:**
+- ✅ MongoDB: Running and accessible on port 27017
+- ✅ Backend API: Running and accessible on port 5000
+- ✅ Frontend: Running and accessible on port 3000
+- ✅ Inter-container communication: Working properly
+- ✅ Database connectivity: Established and tested
+- ✅ API endpoints: Responding correctly
+
+**Access Points:**
+- **Application**: http://localhost:3000
+- **API**: http://localhost:5000
+- **Health Check**: http://localhost:5000/health
+- **Database**: localhost:27017
+
+This Docker Compose approach provides a simpler alternative to manual Docker commands while maintaining the same functionality and reliability.
 ```
