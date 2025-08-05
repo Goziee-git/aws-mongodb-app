@@ -4,7 +4,7 @@ A full-stack web application with React frontend, Node.js backend, and MongoDB d
 
 ## Architecture Overview
 
-![AWS MongoDB Architecture](./generated-diagrams/aws-mongodb-architecture.png)
+![AWS MongoDB Architecture](./generated-diagrams/mongodb.png)
 
 ### Architecture Components
 
